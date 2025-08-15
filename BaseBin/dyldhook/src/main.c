@@ -5,6 +5,7 @@
 #include <string.h>
 #include <sandbox.h>
 #include <libjailbreak/jbclient_mach.h>
+#include "machomerger_hook.h"
 
 #include "dyld.h"
 #include "dyld_jbinfo.h"
@@ -60,6 +61,9 @@ void dyldhook_perform_checkin(void)
 	}
 }
 
+int is_blastdoor = 0;
+extern const char *ORIG(_simple_getenv)(const char *argv[], const char *which);
+
 void dyldhook_init(uintptr_t kernelParams)
 {
 	// If we are in launchd, bail out
@@ -69,10 +73,18 @@ void dyldhook_init(uintptr_t kernelParams)
 
 	// Walk kernelParams to get envp
 	uintptr_t argc = *(uintptr_t *)(kernelParams + sizeof(void *));
+        const char **argv = (const char **)(kernelParams + sizeof(void *) + sizeof(argc));
+        if(argv && argc > 0) {
+          const char *exec = argv[0];
+          if(exec && strlen(exec) && strcmp(exec, "/System/Library/PrivateFrameworks/MessagesBlastDoorSupport.framework/XPCServices/MessagesBlastDoorService.xpc/MessagesBlastDoorService") == 0) {
+            is_blastdoor = 1;
+          }
+        }
 	char **envp = (char **)(kernelParams + sizeof(void *) + sizeof(argc) + (sizeof(const char *) * argc) + sizeof(void *));
 
 	// If DYLD_INSERT_LIBRARIES is not set or does not contain systemhook, bail out
-	const char *insertLibrariesVar = _simple_getenv(envp, "DYLD_INSERT_LIBRARIES");
+	const char *insertLibrariesVar = ORIG(_simple_getenv)((const char **)envp, "DYLD_INSERT_LIBRARIES");
+//	const char *insertLibrariesVar = _simple_getenv(envp, "DYLD_INSERT_LIBRARIES");
 	if (!insertLibrariesVar) return;
 	if (!strstr(insertLibrariesVar, "/systemhook.dylib")) return;
 

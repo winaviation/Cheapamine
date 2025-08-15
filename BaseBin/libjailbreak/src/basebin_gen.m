@@ -95,6 +95,8 @@ int basebin_generate(bool comingFromJBUpdate)
 	NSString *genPath        = JBROOT_PATH(@"/basebin/gen");
 	NSString *fakelibPath    = JBROOT_PATH(@"/basebin/.fakelib");
 	NSString *systemhookPath = JBROOT_PATH(@"/basebin/systemhook.dylib");
+	NSString *tmpCachePath   = JBROOT_PATH(@"/shared_cache");
+	NSString *cachePath      = [fakelibPath stringByAppendingPathComponent:@"shared_cache"];
 
 	[[NSFileManager defaultManager] createDirectoryAtPath:genPath withIntermediateDirectories:YES attributes:nil error:nil];
 
@@ -114,6 +116,10 @@ int basebin_generate(bool comingFromJBUpdate)
 		[[NSFileManager defaultManager] removeItemAtPath:fakelibPath error:nil];
 		[[NSFileManager defaultManager] createDirectoryAtPath:fakelibPath withIntermediateDirectories:YES attributes:nil error:nil];
 		carbonCopy(@"/usr/lib", fakelibPath);
+                if([[NSFileManager defaultManager] fileExistsAtPath:tmpCachePath]) {
+                    [[NSFileManager defaultManager] createDirectoryAtPath:cachePath withIntermediateDirectories:YES attributes:nil error:nil];
+                    carbonMove(tmpCachePath, cachePath);
+                }
 
 		// Delete the dyld inside .fakelib
 		[[NSFileManager defaultManager] removeItemAtPath:fakelibDyldPath error:nil];

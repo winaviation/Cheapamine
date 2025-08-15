@@ -73,8 +73,16 @@ MAKE_TRAMPOLINE(close)
 MAKE_TRAMPOLINE(open)
 MAKE_TRAMPOLINE(fcntl)
 MAKE_TRAMPOLINE(mmap)
-MAKE_TRAMPOLINE(_simple_getenv)
 MAKE_TRAMPOLINE_ALIAS(mig_get_reply_port, dyld_mig_get_reply_port)
+.global _MACHOMERGER_ORIG__simple_getenv
+.global _MACHOMERGER_HOOKTRAMPOLINE__simple_getenv
+_MACHOMERGER_ORIG__simple_getenv:
+    nop // Will be replaced with the original first instruction by machomerger
+    // FALLTHROUGH
+_MACHOMERGER_HOOKTRAMPOLINE__simple_getenv:
+    b .
+//MAKE_TRAMPOLINE(_simple_getenv)
+
 
 #if IOS>=16
 MAKE_TRAMPOLINE(mach_msg_overwrite)
