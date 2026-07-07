@@ -326,7 +326,7 @@ int reboot3(uint64_t flags, ...);
     }];
 }
 
-- (void)userspaceReboot
+- (void)rebootUserspace
 {
     int mib[3] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL};
     size_t size;
