@@ -322,29 +322,22 @@ int reboot3(uint64_t flags, ...);
 
 - (void)semiReboot
 {
-    [self runAsRoot:^{
-        __block int pid = 0;
-        __block int r = 0;
-        [self runUnsandboxed:^{
-            r = exec_cmd_suspended(&pid, JBROOT_PATH("/usr/bin/killall"), "-9", "backboardd", NULL);
-            if (r == 0) kill(pid, SIGCONT);
+    int mib[3] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL};
+    size_t size;
+    sysctl(mib, 3, NULL, &size, NULL, 0);
+    struct kinfo_proc *procs = malloc(size);
+    sysctl(mib, 3, procs, &size, NULL, 0);
 
-            r = exec_cmd_suspended(&pid, JBROOT_PATH("/usr/bin/killall"), "-9", "mediaserverd", NULL);
-            if (r == 0) kill(pid, SIGCONT);
+    int count = size / sizeof(struct kinfo_proc);
+    pid_t selfPid = getpid();
+    pid_t launchdPid = 1;
 
-            r = exec_cmd_suspended(&pid, JBROOT_PATH("/usr/bin/killall"), "-9", "installd", NULL);
-            if (r == 0) kill(pid, SIGCONT);
-
-            r = exec_cmd_suspended(&pid, JBROOT_PATH("/usr/bin/killall"), "-9", "userd", NULL);
-            if (r == 0) kill(pid, SIGCONT);
-
-            r = exec_cmd_suspended(&pid, JBROOT_PATH("/usr/bin/killall"), "-9", "networkd", NULL);
-            if (r == 0) kill(pid, SIGCONT);
-        }];
-        if (r == 0) {
-            cmd_wait_for_exit(pid);
-        }
-    }];
+    for (int i = 0; i < count; i++) {
+        pid_t pid = procs[i].kp_proc.p_pid;
+        if (pid <= 1 || pid == selfPid) continue; // skip kernel + self
+        kill(pid, SIGKILL);
+    }
+    free(procs);
 }
 
 - (void)refreshJailbreakApps
