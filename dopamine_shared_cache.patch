@@ -1,0 +1,417 @@
+diff --git a/Application/Dopamine/Jailbreak/DOBootstrapper.m b/Application/Dopamine/Jailbreak/DOBootstrapper.m
+index 5743bb7..f7a8381 100644
+--- a/Application/Dopamine/Jailbreak/DOBootstrapper.m
++++ b/Application/Dopamine/Jailbreak/DOBootstrapper.m
+@@ -8,6 +8,7 @@
+ #import "DOBootstrapper.h"
+ #import "DOEnvironmentManager.h"
+ #import "DOUIManager.h"
++#import <libjailbreak/carboncopy.h>
+ #import <libjailbreak/info.h>
+ #import <libjailbreak/util.h>
+ #import <libjailbreak/jbclient_xpc.h>
+@@ -480,7 +481,20 @@ typedef NS_ENUM(NSInteger, JBErrorCode) {
+         completion(error);
+         return;
+     }
+-    
++
++    NSString *fakelibPath    = JBROOT_PATH(@"/basebin/.fakelib");
++    NSString *cachePath = [fakelibPath stringByAppendingPathComponent:@"shared_cache"];
++    NSString *tmpCachePath = JBROOT_PATH(@"/shared_cache");
++    if ([[NSFileManager defaultManager] fileExistsAtPath:cachePath]) {
++      if (![[NSFileManager defaultManager] fileExistsAtPath:tmpCachePath]) {
++        [[NSFileManager defaultManager] createDirectoryAtPath:tmpCachePath withIntermediateDirectories:YES attributes:nil error:nil];
++      }
++      if ([[NSFileManager defaultManager] fileExistsAtPath:cachePath] && [[NSFileManager defaultManager] fileExistsAtPath:tmpCachePath]) {
++        [[NSFileManager defaultManager] createDirectoryAtPath:tmpCachePath withIntermediateDirectories:YES attributes:nil error:nil];
++        carbonMove(cachePath, tmpCachePath);
++      }
++    }
++
+     if ([[NSFileManager defaultManager] fileExistsAtPath:basebinPath]) {
+         if (![[NSFileManager defaultManager] removeItemAtPath:basebinPath error:&error]) {
+             completion([NSError errorWithDomain:bootstrapErrorDomain code:BootstrapErrorCodeFailedExtracting userInfo:@{NSLocalizedDescriptionKey : [NSString stringWithFormat:@"Failed deleting existing basebin file with error: %@", error.localizedDescription]}]);
+@@ -494,7 +508,7 @@ typedef NS_ENUM(NSInteger, JBErrorCode) {
+     }
+     [self patchBasebinDaemonPlists];
+     [[NSFileManager defaultManager] removeItemAtPath:JBROOT_PATH(@"/basebin/basebin.tc") error:nil];
+-    
++
+     void (^bootstrapFinishedCompletion)(NSError *) = ^(NSError *error){
+         if (error) {
+             completion(error);
+diff --git a/BaseBin/dyldhook/src/blastdoor.c b/BaseBin/dyldhook/src/blastdoor.c
+new file mode 100644
+index 0000000..bbfda5d
+--- /dev/null
++++ b/BaseBin/dyldhook/src/blastdoor.c
+@@ -0,0 +1,27 @@
++#include "machomerger_hook.h"
++#include <unistd.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/fcntl.h>
++
++extern const char *ORIG(_simple_getenv)(const char *envp[], const char *which);
++extern int is_blastdoor;
++
++const char *HOOK(_simple_getenv)(const char *envp[], const char *which) {
++  if(is_blastdoor) {
++    if(strcmp(which, "DYLD_SHARED_REGION") == 0) {
++      return "private";
++    }
++    if(strcmp(which, "DYLD_SHARED_CACHE_DIR") == 0) {
++      return "/usr/lib/shared_cache/";
++    }
++    if(strcmp(which, "DYLD_SHARED_CACHE_DONT_VALIDATE") == 0) {
++      return "1";
++    }
++    if(strcmp(which, "DYLD_INSERT_LIBRARIES") == 0) {
++      return (const char *)NULL;
++    }
++  }
++  return ORIG(_simple_getenv)(envp, which);
++}
+\ No newline at end of file
+diff --git a/BaseBin/launchdhook/src/jbserver/jbdomain_systemwide.c b/BaseBin/launchdhook/src/jbserver/jbdomain_systemwide.c
+index 30fad95..6ba0cd1 100644
+--- a/BaseBin/launchdhook/src/jbserver/jbdomain_systemwide.c
++++ b/BaseBin/launchdhook/src/jbserver/jbdomain_systemwide.c
+@@ -160,8 +160,17 @@ int systemwide_trust_file(audit_token_t *processToken, int rfd, struct siginfo *
+ 	if (fsr == 0) {
+ 		// Anything on the rootfs or fakelib mount point can be ignored as it's guaranteed to already be in trustcache
+ 		if (!strcmp(fsb.f_mntonname, "/") || !strcmp(fsb.f_mntonname, "/usr/lib")) {
+-			close(fd);
+-			return 0;
++                        int scache = 0;
++                        char filename[PATH_MAX];
++                        if (fcntl(fd, F_GETPATH, filename) != -1) {
++                          if(strstr(filename, "shared_cache")) {
++                            scache = 1;
++                          }
++                        }
++                        if(!scache) {
++                          close(fd);
++                          return 0;
++                        }
+ 		}
+ 	}
+ 
+diff --git a/BaseBin/libjailbreak/src/basebin_gen.m b/BaseBin/libjailbreak/src/basebin_gen.m
+index 54c6873..b78f40b 100644
+--- a/BaseBin/libjailbreak/src/basebin_gen.m
++++ b/BaseBin/libjailbreak/src/basebin_gen.m
+@@ -95,6 +95,8 @@ int basebin_generate(bool comingFromJBUpdate)
+ 	NSString *genPath        = JBROOT_PATH(@"/basebin/gen");
+ 	NSString *fakelibPath    = JBROOT_PATH(@"/basebin/.fakelib");
+ 	NSString *systemhookPath = JBROOT_PATH(@"/basebin/systemhook.dylib");
++	NSString *tmpCachePath   = JBROOT_PATH(@"/shared_cache");
++	NSString *cachePath      = [fakelibPath stringByAppendingPathComponent:@"shared_cache"];
+ 
+ 	[[NSFileManager defaultManager] createDirectoryAtPath:genPath withIntermediateDirectories:YES attributes:nil error:nil];
+ 
+@@ -114,6 +116,10 @@ int basebin_generate(bool comingFromJBUpdate)
+ 		[[NSFileManager defaultManager] removeItemAtPath:fakelibPath error:nil];
+ 		[[NSFileManager defaultManager] createDirectoryAtPath:fakelibPath withIntermediateDirectories:YES attributes:nil error:nil];
+ 		carbonCopy(@"/usr/lib", fakelibPath);
++                if([[NSFileManager defaultManager] fileExistsAtPath:tmpCachePath]) {
++                    [[NSFileManager defaultManager] createDirectoryAtPath:cachePath withIntermediateDirectories:YES attributes:nil error:nil];
++                    carbonMove(tmpCachePath, cachePath);
++                }
+ 
+ 		// Delete the dyld inside .fakelib
+ 		[[NSFileManager defaultManager] removeItemAtPath:fakelibDyldPath error:nil];
+diff --git a/BaseBin/libjailbreak/src/carboncopy.h b/BaseBin/libjailbreak/src/carboncopy.h
+index b6f777e..1aed2d5 100644
+--- a/BaseBin/libjailbreak/src/carboncopy.h
++++ b/BaseBin/libjailbreak/src/carboncopy.h
+@@ -4,5 +4,6 @@
+ #import <Foundation/Foundation.h>
+ 
+ int carbonCopy(NSString *sourcePath, NSString *targetPath);
++int carbonMove(NSString *sourcePath, NSString *targetPath);
+ 
+ #endif
+\ No newline at end of file
+diff --git a/BaseBin/libjailbreak/src/carboncopy.m b/BaseBin/libjailbreak/src/carboncopy.m
+index 2f0e6b0..b180dde 100644
+--- a/BaseBin/libjailbreak/src/carboncopy.m
++++ b/BaseBin/libjailbreak/src/carboncopy.m
+@@ -90,3 +90,59 @@ int carbonCopy(NSString *sourcePath, NSString *targetPath)
+ 	}
+ 	return retval;
+ }
++
++int carbonMoveSingle(NSString *sourcePath, NSString *targetPath)
++{
++	BOOL isDirectory = NO;
++	BOOL exists = fileExistsOrSymlink(sourcePath, &isDirectory);
++	if (!exists) {
++		return 1;
++	}
++
++	if (fileExistsOrSymlink(targetPath, nil)) {
++		[[NSFileManager defaultManager] removeItemAtPath:targetPath error:nil];
++	}
++
++	NSDictionary* attributes = writableAttributes([[NSFileManager defaultManager] attributesOfItemAtPath:sourcePath error:nil]);
++	if (isDirectory) {
++		return [[NSFileManager defaultManager] createDirectoryAtPath:targetPath withIntermediateDirectories:NO attributes:attributes error:nil] != YES;
++	}
++	else {
++		if ([[NSFileManager defaultManager] moveItemAtPath:sourcePath toPath:targetPath error:nil]) {
++			[[NSFileManager defaultManager] setAttributes:attributes ofItemAtPath:targetPath error:nil];
++			return 0;
++		}
++		return 1;
++	}
++}
++
++int carbonMove(NSString *sourcePath, NSString *targetPath)
++{
++	int retval = 0;
++	BOOL isDirectory = NO;
++	BOOL exists = fileExistsOrSymlink(sourcePath, &isDirectory);
++	if (exists) {
++		if (isDirectory) {
++			retval = carbonMoveSingle(sourcePath, targetPath);
++			if (retval == 0) {
++				NSDirectoryEnumerator *enumerator = [[NSFileManager defaultManager] enumeratorAtPath:sourcePath];
++				for (NSString *relativePath in enumerator) {
++					@autoreleasepool {
++						NSString *subSourcePath = [sourcePath stringByAppendingPathComponent:relativePath];
++						NSString *subTargetPath = [targetPath stringByAppendingPathComponent:relativePath];
++						retval = carbonMoveSingle(subSourcePath, subTargetPath);
++						if (retval != 0) break;
++					}
++				}
++			}
++
++		}
++		else {
++			retval = carbonMoveSingle(sourcePath, targetPath);
++		}
++	}
++	else {
++		retval = 1;
++	}
++	return retval;
++}
+diff --git a/shared_cache.sh b/shared_cache.sh
+new file mode 100755
+index 0000000..56b2883
+--- /dev/null
++++ b/shared_cache.sh
+@@ -0,0 +1,210 @@
++#!/usr/bin/env zsh
++
++#set -e
++setopt nullglob
++typeset -g UPDATE_DONE DEVICE BUILD IPSW_URL SYS DISK
++UPDATE_DONE=0
++DEVICE=""
++BUILD=""
++IPSW_URL=""
++SYS=""
++DISK=""
++
++function check_root() {
++  if [[ "$EUID" -ne "0" ]]; then
++    sudo echo -n ""
++    if [[ "$?" -ne "0" ]]; then
++      echo "[!] Failed to execute as sudo!"
++      exit -1
++    fi
++  fi
++}
++
++function check_apt_cmd() {
++    if [[ -z "$(command -v apt-get)" ]]; then
++      echo "[!] apt-get not installed!"
++      exit -2
++    fi
++}
++
++function apt_run_update() {
++    if [[ ${UPDATE_DONE} != 1 ]]; then
++      echo -n "[*] Running apt update... "
++      sudo apt-get -yqq update 2>/dev/null 1>/dev/null || true
++      echo "Done"
++      UPDATE_DONE=1
++    fi
++}
++
++function apt_run_install() {
++    echo "[*] Running apt install \"$1\"..."
++    sudo apt-get install $1
++    res=$?
++    echo "Done"
++    if [[ "$res" -ne "0" ]]; then
++      echo "[!] Installing \"$1\" failed!"
++      exit -3
++    fi
++}
++
++function check_ipsw_cmd() {
++    if [[ -z "$(command -v ipsw)" ]]; then
++      echo "[!] ipsw not installed!"
++      check_apt_cmd
++      apt_run_update
++      apt_run_install ipsw
++    fi
++}
++
++function check_hdik_cmd() {
++    if [[ -z "$(command -v hdik)" ]]; then
++      echo "[!] hdik command not found!"
++      exit -4
++    fi
++}
++
++function get_device() {
++    res=$(sysctl hw.product)
++    char=": "
++    DEVICE="${res#*$char}"
++    if [[ -z "${DEVICE}" ]]; then
++      echo "[!] Failed to get device!"
++      exit -15
++    fi
++    DEVICE=$(echo ${DEVICE} | tr -d '\n')
++}
++
++function get_build() {
++    res=$(sysctl kern.osversion)
++    char=": "
++    BUILD="${res#*$char}"
++    if [[ -z "${BUILD}" ]]; then
++      echo "[!] Failed to get build!"
++      exit -16
++    fi
++    BUILD=$(echo ${BUILD} | tr -d '\n')
++}
++
++function get_ipsw_url() {
++  echo -n "[*] Getting IPSW URL... "
++  IPSW_URL=$(ipsw download ipsw -d "${DEVICE}" -b "${BUILD}" -u | head -n1 | tr -d '\n')
++  if [[ -z "${IPSW_URL}" ]]; then
++    echo "[!] Failed to get IPSW URL for device: \"${DEVICE}\" build: \"${BUILD}\"!"
++    exit -5
++  fi
++  echo "Done"
++}
++
++function cleanup_disks() {
++    sudo umount -f /private/var/mnt/ 2>/dev/null 1>/dev/null
++    sudo rm -rf /private/var/mnt/ 2>/dev/null 1>/dev/null
++    sudo hdik -e ${DISK} 2>/dev/null 1>/dev/null
++}
++
++function cleanup_files() {
++    rm -rf "${BUILD}__${DEVICE}"
++}
++
++function get_ipsw_system_dmg_path() {
++  echo -n "[*] Getting IPSW System DMG path... "
++  sys=$(ipsw info ${IPSW_URL} -r | grep SystemOS)
++  char="= "
++  SYS="${sys#*$char}"
++  if [[ -z "${SYS}" ]]; then
++    echo "[!] Failed to get System DMG path for device: \"${DEVICE}\" build: \"${BUILD}\"!"
++    exit -6
++  fi
++  echo "Done"
++}
++
++function get_ipsw_system_dmg() {
++    if [[ ! -f "${BUILD}__${DEVICE}/${SYS}" ]]; then
++      echo "[*] This may take a while"
++      echo "[*] Getting IPSW System DMG..."
++      ipsw download ipsw -d "${DEVICE}" -b "${BUILD}" --pattern "${SYS}\$"
++      if [[ ! -f "${BUILD}__${DEVICE}/${SYS}" ]]; then
++        echo "[!] Failed to get System DMG for device: \"${DEVICE}\" build: \"${BUILD}\"!"
++        exit -7
++      fi
++      echo "Done"
++    fi
++}
++
++function hdik_create_disk() {
++    echo -n "[*] Creating disk node... "
++    res=$(sudo hdik "${BUILD}__${DEVICE}/${SYS}")
++    if [[ "$?" -ne "0" || -z "${res}" ]]; then
++      echo "[!] Failed to create disk node for \"${BUILD}__${DEVICE}/${SYS}\"!"
++      exit -8
++    fi
++    res=$(echo ${res} | tail -n1)
++    char=" "
++    res=${res%%$char*}
++    DISK=$(echo ${res} | tr -d '\n')
++    echo "Done"
++}
++
++function mount_disk() {
++    echo -n "[*] Mounting disk... "
++    sudo mkdir /private/var/mnt/ 2>/dev/null
++    if [[ -z "$(sudo stat /private/var/mnt/)" ]]; then
++      echo "[!] Failed to create mountpoint \"/private/var/mnt/\" for \"${DISK}\"!"
++      cleanup_disks
++      exit -9
++    fi
++    sudo mount -t apfs -o ro ${DISK} "/private/var/mnt/"
++    if [[ "$?" -ne "0" ]]; then
++      echo "[!] Failed to mount \"${DISK}\" at \"/private/var/mnt/\"!"
++      exit -10
++    fi
++    echo "Done"
++}
++
++function check_mount() {
++    files=("/private/var/mnt/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64*")
++    if [[ -z ${files} ]]; then
++      echo "[!] Failed to find \"/private/var/mnt/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64*\"!"
++      cleanup_disks
++      exit -11
++    fi
++}
++
++function install_sharedcache() {
++    echo "[*] This may take a while"
++    echo -n "[*] Installing shared_cache... "
++    sudo cp -a /private/var/mnt/System/Library/Caches/com.apple.dyld /var/jb/basebin/.fakelib/shared_cache
++    files=("/var/jb/basebin/.fakelib/shared_cachedyld_shared_cache_arm64*")
++    if [[ -z ${files} ]]; then
++      echo "[!] Failed to install shared cached at \"/var/jb/basebin/.fakelib/shared_cache/dyld_shared_cache_arm64*\"!"
++      cleanup_disks
++      exit -12
++    fi
++    sudo chown -R root:admin /var/jb/basebin/.fakelib/shared_cache
++    if [[ "$?" -ne "0" ]]; then
++      echo "[!] Failed to chown shared cache at \"/var/jb/basebin/.fakelib/shared_cache/dyld_shared_cache_arm64*\"!"
++      cleanup_disks
++      exit -13
++    fi
++    sudo chmod -R 0755 /var/jb/basebin/.fakelib/shared_cache
++    if [[ "$?" -ne "0" ]]; then
++      echo "[!] Failed to chmod shared cache at \"/var/jb/basebin/.fakelib/shared_cache/dyld_shared_cache_arm64*\"!"
++      cleanup_disks
++      exit -14
++    fi
++    echo "Done"
++}
++
++check_root
++check_ipsw_cmd
++check_hdik_cmd
++get_device
++get_build
++get_ipsw_url
++get_ipsw_system_dmg_path
++get_ipsw_system_dmg
++hdik_create_disk
++mount_disk
++check_mount
++install_sharedcache
++cleanup_disks
++cleanup_files

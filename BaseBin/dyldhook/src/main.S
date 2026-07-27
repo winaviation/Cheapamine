@@ -1,110 +1,210 @@
-#define MAKE_TRAMPOLINE_ALIAS(to, alias) .global _##alias %% .global _MACHOMERGER_TRAMPOLINE_##to## %% _##alias: %% _MACHOMERGER_TRAMPOLINE_##to##: %% b .
-#define MAKE_TRAMPOLINE(to) MAKE_TRAMPOLINE_ALIAS(to, to)
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <sandbox.h>
+#include <libjailbreak/jbclient_mach.h>
+#include "machomerger_hook.h"
 
-#define SYSCALL_PROLOGUE stp x0, x1, [sp, -16]! %% stp x2, x3, [sp, -16]! %% stp x4, x5, [sp, -16]! %% stp x6, x7, [sp, -16]!
-#define SYSCALL_EPILOGUE ldp x6, x7, [sp], 16 %% ldp x4, x5, [sp], 16 %% ldp x2, x3, [sp], 16 %% ldp x0, x1, [sp], 16
+#include "dyld.h"
+#include "dyld_jbinfo.h"
 
-#define DEF_SYSCALL(name, num)  .global _##name %% _##name: %% SYSCALL_PROLOGUE %% mov x16, num %% svc #0x80 %% mov x16, x0 %% SYSCALL_EPILOGUE %% bcc name##_end %% cmp x16, #4 %% beq _##name %% mov x16, #-1 %% name##_end: %% mov x0, x16 %% ret
-#define DEF_MACHTRAP(name, num) .global _##name %% _##name: %% mov x16, -num %% svc #0x80 %% ret
-#define DEF_ALIAS(to, from) .global _##to %% _##to: %% b _##from
+bool gDyldHookLog = false;
 
-.text
-.align 4
+__attribute__((section("__DATA,__jbinfo"))) static char jbinfoSection[0x4000];
+#define jbInfo ((struct dyld_jbinfo *)&jbinfoSection[0])
 
-.global _MACHOMERGER_START_HOOK
-_MACHOMERGER_START_HOOK:
-    // Copy-Paste from dyld
-    mov    x0, sp
-    mov    x19, sp
-    and    sp, x0, #~15 // force 16-byte alignment of stack
-    mov    fp, #0
+bool gDyldhookInitDone = false;
 
-    // Call init
-    bl _dyldhook_init
+bool jbinfo_is_checked_in(void)
+{
+	return jbInfo->state == DYLD_STATE_CHECKED_IN;
+}
 
-    // Restore stack
-    mov sp, x19
+char *jbinfo_get_jbroot(void)
+{
+	return jbInfo->jbRootPath;
+}
 
-    // Jump to real start
-    b _MACHOMERGER_REAL_START
+void consume_tokenized_sandbox_extensions(char *sandboxExtensions)
+{
+	if (sandboxExtensions[0] == '\0') return;
 
-#if IOS==15 && __arm64e__
+	char *it = sandboxExtensions;
+	char *last = sandboxExtensions;
+	while (*(++it) != '\0') {
+		if (*it == '|') {
+			*it = '\0';
+			sandbox_extension_consume(last);
+			last = &it[1];
+			*it = '|';
+		}
+	}
+	sandbox_extension_consume(last);
+}
 
-.global _MACHOMERGER_ORIG__ZN5dyld313loadDyldCacheERKNS_18SharedCacheOptionsEPNS_19SharedCacheLoadInfoE
-.global _MACHOMERGER_HOOKTRAMPOLINE__ZN5dyld313loadDyldCacheERKNS_18SharedCacheOptionsEPNS_19SharedCacheLoadInfoE
-_MACHOMERGER_ORIG__ZN5dyld313loadDyldCacheERKNS_18SharedCacheOptionsEPNS_19SharedCacheLoadInfoE:
-    nop // Will be replaced with the original first instruction by machomerger
-    // FALLTHROUGH
-_MACHOMERGER_HOOKTRAMPOLINE__ZN5dyld313loadDyldCacheERKNS_18SharedCacheOptionsEPNS_19SharedCacheLoadInfoE:
-    b . // Will be patched by machomerger
+void dyldhook_perform_checkin(void)
+{
+	struct jbserver_mach_msg_checkin_reply *replyPtr; // Only for sizeof macro
 
-#endif
+	char *jbRootPathPtr = &jbInfo->data[0];
+	char *bootUUIDPtr = &jbInfo->data[sizeof(replyPtr->jbRootPath)];
+	char *sandboxExtensionsPtr = &jbInfo->data[sizeof(replyPtr->jbRootPath)+sizeof(replyPtr->bootUUID)];
 
-.global _MACHOMERGER_ORIG__ZN5dyld44APIs11dlopen_fromEPKciPv
-.global _MACHOMERGER_HOOKTRAMPOLINE__ZN5dyld44APIs11dlopen_fromEPKciPv
-_MACHOMERGER_ORIG__ZN5dyld44APIs11dlopen_fromEPKciPv:
-    nop // Will be replaced with the original first instruction by machomerger
-    // FALLTHROUGH
-_MACHOMERGER_HOOKTRAMPOLINE__ZN5dyld44APIs11dlopen_fromEPKciPv:
-    b .
+	// Tell jbserver (in launchd) that this process exists
+	// This will, amongst other things, disable page validation, which allows instruction hooks to be applied later
+	if (jbclient_mach_process_checkin(jbRootPathPtr, bootUUIDPtr, sandboxExtensionsPtr, &jbInfo->fullyDebugged) == 0) {
+		if (gDyldHookLog) {
+			_simple_dprintf(2, "Performed checkin [%s %s %s]\n", jbRootPathPtr, bootUUIDPtr, sandboxExtensionsPtr);
+		}
+		consume_tokenized_sandbox_extensions(sandboxExtensionsPtr);
+		jbInfo->jbRootPath = jbRootPathPtr;
+		jbInfo->bootUUID = bootUUIDPtr;
+		jbInfo->sandboxExtensions = sandboxExtensionsPtr;
+		jbInfo->state = DYLD_STATE_CHECKED_IN;
+	}
+	else {
+		if (gDyldHookLog) {
+			_simple_dprintf(2, "Checkin failed???\n");
+		}
+	}
+}
 
-MAKE_TRAMPOLINE(MACHOMERGER_REAL_START)
-MAKE_TRAMPOLINE(cerror)
-MAKE_TRAMPOLINE_ALIAS(__getpid, getpid)
-MAKE_TRAMPOLINE_ALIAS(__bzero, bzero)
-MAKE_TRAMPOLINE(mach_msg_destroy)
-MAKE_TRAMPOLINE(mach_reply_port)
-MAKE_TRAMPOLINE(mach_port_construct)
-MAKE_TRAMPOLINE(mach_port_deallocate)
-MAKE_TRAMPOLINE(memset)
-MAKE_TRAMPOLINE(task_self_trap)
-MAKE_TRAMPOLINE(__stack_chk_fail)
-MAKE_TRAMPOLINE_ALIAS(_kernelrpc_mach_vm_allocate_trap, vm_allocate)
-MAKE_TRAMPOLINE_ALIAS(_kernelrpc_mach_vm_deallocate_trap, vm_deallocate)
-MAKE_TRAMPOLINE(vm_protect)
-MAKE_TRAMPOLINE(memcpy)
-MAKE_TRAMPOLINE(strcmp)
-MAKE_TRAMPOLINE(strncmp)
-MAKE_TRAMPOLINE(strlen)
-MAKE_TRAMPOLINE(strstr)
-MAKE_TRAMPOLINE(strcpy)
-MAKE_TRAMPOLINE(strcat)
-MAKE_TRAMPOLINE(close)
-MAKE_TRAMPOLINE(open)
-MAKE_TRAMPOLINE(fcntl)
-MAKE_TRAMPOLINE(mmap)
-MAKE_TRAMPOLINE(_simple_getenv)
-MAKE_TRAMPOLINE(_simple_dprintf)
-MAKE_TRAMPOLINE(mach_init)
-MAKE_TRAMPOLINE(mig_get_reply_port)
+int is_blastdoor = 0;
+extern const char *ORIG(_simple_getenv)(const char *argv[], const char *which);
 
-#if IOS>=16
-MAKE_TRAMPOLINE(mach_msg_overwrite)
-MAKE_TRAMPOLINE(mach_msg2_internal)
-#else
-MAKE_TRAMPOLINE(mach_msg)
-#endif
+int simple_atoi(char *p)
+{
+	int negate = p[0] == '-';
+	if (negate) p++;
 
-DEF_SYSCALL(read, 3)
-DEF_SYSCALL(write, 4)
-DEF_SYSCALL(access, 33)
-DEF_SYSCALL(lseek, 199)
-DEF_SYSCALL(__sandbox_ms, 381)
-DEF_SYSCALL(fileport_makeport, 430)
-DEF_SYSCALL(setuid, 23)
-DEF_SYSCALL(setreuid, 126)
-DEF_SYSCALL(setgid, 181)
-DEF_SYSCALL(setregid, 127)
-DEF_SYSCALL(setgroups, 80)
+    int k = 0;
+    while (*p) {
+		if (*p >= '0' && *p <= '9') {
+			k = k * 10 + (*p) - '0';
+		}
+		p++;
+	}
 
-// DEF_SYSCALL(getuid, 24)
-// DEF_SYSCALL(geteuid, 25)
-// DEF_SYSCALL(getgid, 47)
-// DEF_SYSCALL(getegid, 43)
-// DEF_SYSCALL(getppid, 39)
+	return (negate ? -1 : 1) * k;
+}
 
+mach_port_t mach_task_self_ = MACH_PORT_NULL;
+void mach_init_4real(void)
+{
+	// Because mach_init has a "call once" mechanism, we can just call it ourselves without breaking anything in the later dyld flow
+	// This allows us to have a proper pthread descriptor which fixes a whole bunch of stuff
+	extern void mach_init(void);
+	mach_init(); // This sets up mach_task_self_ in dyld but we can't get it since getting a global from dyld is not implemented in MachOMerger
 
-.data
-.global ___stack_chk_guard
-___stack_chk_guard:
-    .quad 0x1337
+	mach_task_self_ = task_self_trap();
+	// Apparently task_self_trap increases the refcount of the task so we call deallocate again to decrease it
+	mach_port_deallocate(mach_task_self_, mach_task_self_);
+}
+
+void dyldhook_init(uintptr_t kernelParams)
+{
+	mach_init_4real();
+
+	// If we are in launchd, bail out
+	if (getpid() == 1) {
+		return;
+	}
+
+	// Walk kernelParams to get envp
+	uintptr_t argc = *(uintptr_t *)(kernelParams + sizeof(void *));
+	const char **argv = (const char **)(kernelParams + sizeof(void *) + sizeof(argc));
+	if(argv && argc > 0) {
+	  const char *exec = argv[0];
+	  if(exec && strlen(exec) && strcmp(exec, "/System/Library/PrivateFrameworks/MessagesBlastDoorSupport.framework/XPCServices/MessagesBlastDoorService.xpc/MessagesBlastDoorService") == 0) {
+	    is_blastdoor = 1;
+	  }
+	}
+	char **envp = (char **)(kernelParams + sizeof(void *) + sizeof(argc) + (sizeof(const char *) * argc) + sizeof(void *));
+
+	if (_simple_getenv(envp, "DYLD_HOOK_PRINT") != NULL) {
+		gDyldHookLog = true;
+	}
+
+	if (_simple_getenv(envp, "DYLD_HOOK_SETUID") != NULL) {
+		int uid = 0, gid = 0, ruid = 0, rgid = 0, fd = -1;
+		gid_t groups[NGROUPS_MAX] = { 0 };
+
+		for (int i = 1; i < argc; i++) {
+			if (gDyldHookLog) {
+				_simple_dprintf(2, "Processing %s\n", argv[i]);
+			}
+
+			int r = argc - i - 1;
+			if (!strcmp(argv[i], "--fd")) {
+				if (r < 1) break;
+				fd = simple_atoi(argv[++i]);
+			}
+			else if (!strcmp(argv[i], "--uid")) {
+				if (r < 1) break;
+				uid = simple_atoi(argv[++i]);
+			}
+			else if (!strcmp(argv[i], "--ruid")) {
+				if (r < 1) break;
+				ruid = simple_atoi(argv[++i]);
+			}
+			else if (!strcmp(argv[i], "--gid")) {
+				if (r < 1) break;
+				gid = simple_atoi(argv[++i]);
+			}
+			else if (!strcmp(argv[i], "--rgid")) {
+				if (r < 1) break;
+				rgid = simple_atoi(argv[++i]);
+			}
+			else if (!strcmp(argv[i], "--groups")) {
+				if (r < NGROUPS_MAX) break;
+				for (int k = 0; k < NGROUPS_MAX; k++) {
+					groups[k] = simple_atoi(argv[++i]);
+				}
+			}
+		}
+
+		if (gDyldHookLog) {
+			_simple_dprintf(2, "DYLD_HOOK_SETUID (fd=%d, uid=%d, ruid=%d, gid=%d, rgid=%d)\n", fd, uid, ruid, gid, rgid);
+		}
+
+		if (fd == -1) return;
+
+		setgid(gid);
+		setgid(gid);
+		setregid(rgid, -1);
+		int ngroups;
+		for (ngroups = 0; ngroups < NGROUPS_MAX; ngroups++) {
+			if (groups[ngroups] == -1) break;
+		}
+		setgroups(ngroups, groups);
+		setuid(uid);
+		setuid(uid);
+		setreuid(ruid, -1);
+
+		char r = 0x42;
+		write(fd, &r, sizeof(r));
+
+		__asm("b .");
+	}
+
+	// If DYLD_INSERT_LIBRARIES is not set or does not contain systemhook, bail out
+	const char *insertLibrariesVar = ORIG(_simple_getenv)((const char **)envp, "DYLD_INSERT_LIBRARIES");
+//	const char *insertLibrariesVar = _simple_getenv(envp, "DYLD_INSERT_LIBRARIES");
+	if (!insertLibrariesVar) {
+		if (gDyldHookLog) {
+			_simple_dprintf(2, "Not checking in, DYLD_INSERT_LIBRARIES was not found\n");
+		}
+		return;
+	}
+	if (!strstr(insertLibrariesVar, "/systemhook.dylib")) {
+		if (gDyldHookLog) {
+			_simple_dprintf(2, "Not checking in, no systemhook found in DYLD_INSERT_LIBRARIES (%s)\n", insertLibrariesVar);
+		}
+		return;
+	}
+
+	// If all is well, do check-in right here before dyld_start!
+	dyldhook_perform_checkin();
+}

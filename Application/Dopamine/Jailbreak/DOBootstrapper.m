@@ -8,6 +8,7 @@
 #import "DOBootstrapper.h"
 #import "DOEnvironmentManager.h"
 #import "DOUIManager.h"
+#import <libjailbreak/carboncopy.h>
 #import <libjailbreak/info.h>
 #import <libjailbreak/util.h>
 #import <libjailbreak/jbclient_xpc.h>
@@ -480,7 +481,20 @@ typedef NS_ENUM(NSInteger, JBErrorCode) {
         completion(error);
         return;
     }
-    
+
+    NSString *fakelibPath    = JBROOT_PATH(@"/basebin/.fakelib");
+    NSString *cachePath = [fakelibPath stringByAppendingPathComponent:@"shared_cache"];
+    NSString *tmpCachePath = JBROOT_PATH(@"/shared_cache");
+    if ([[NSFileManager defaultManager] fileExistsAtPath:cachePath]) {
+      if (![[NSFileManager defaultManager] fileExistsAtPath:tmpCachePath]) {
+        [[NSFileManager defaultManager] createDirectoryAtPath:tmpCachePath withIntermediateDirectories:YES attributes:nil error:nil];
+      }
+      if ([[NSFileManager defaultManager] fileExistsAtPath:cachePath] && [[NSFileManager defaultManager] fileExistsAtPath:tmpCachePath]) {
+        [[NSFileManager defaultManager] createDirectoryAtPath:tmpCachePath withIntermediateDirectories:YES attributes:nil error:nil];
+        carbonMove(cachePath, tmpCachePath);
+      }
+    }
+
     if ([[NSFileManager defaultManager] fileExistsAtPath:basebinPath]) {
         if (![[NSFileManager defaultManager] removeItemAtPath:basebinPath error:&error]) {
             completion([NSError errorWithDomain:bootstrapErrorDomain code:BootstrapErrorCodeFailedExtracting userInfo:@{NSLocalizedDescriptionKey : [NSString stringWithFormat:@"Failed deleting existing basebin file with error: %@", error.localizedDescription]}]);
@@ -494,7 +508,7 @@ typedef NS_ENUM(NSInteger, JBErrorCode) {
     }
     [self patchBasebinDaemonPlists];
     [[NSFileManager defaultManager] removeItemAtPath:JBROOT_PATH(@"/basebin/basebin.tc") error:nil];
-    
+
     void (^bootstrapFinishedCompletion)(NSError *) = ^(NSError *error){
         if (error) {
             completion(error);

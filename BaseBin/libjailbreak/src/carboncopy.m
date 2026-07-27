@@ -90,3 +90,59 @@ int carbonCopy(NSString *sourcePath, NSString *targetPath)
 	}
 	return retval;
 }
+
+int carbonMoveSingle(NSString *sourcePath, NSString *targetPath)
+{
+	BOOL isDirectory = NO;
+	BOOL exists = fileExistsOrSymlink(sourcePath, &isDirectory);
+	if (!exists) {
+		return 1;
+	}
+
+	if (fileExistsOrSymlink(targetPath, nil)) {
+		[[NSFileManager defaultManager] removeItemAtPath:targetPath error:nil];
+	}
+
+	NSDictionary* attributes = writableAttributes([[NSFileManager defaultManager] attributesOfItemAtPath:sourcePath error:nil]);
+	if (isDirectory) {
+		return [[NSFileManager defaultManager] createDirectoryAtPath:targetPath withIntermediateDirectories:NO attributes:attributes error:nil] != YES;
+	}
+	else {
+		if ([[NSFileManager defaultManager] moveItemAtPath:sourcePath toPath:targetPath error:nil]) {
+			[[NSFileManager defaultManager] setAttributes:attributes ofItemAtPath:targetPath error:nil];
+			return 0;
+		}
+		return 1;
+	}
+}
+
+int carbonMove(NSString *sourcePath, NSString *targetPath)
+{
+	int retval = 0;
+	BOOL isDirectory = NO;
+	BOOL exists = fileExistsOrSymlink(sourcePath, &isDirectory);
+	if (exists) {
+		if (isDirectory) {
+			retval = carbonMoveSingle(sourcePath, targetPath);
+			if (retval == 0) {
+				NSDirectoryEnumerator *enumerator = [[NSFileManager defaultManager] enumeratorAtPath:sourcePath];
+				for (NSString *relativePath in enumerator) {
+					@autoreleasepool {
+						NSString *subSourcePath = [sourcePath stringByAppendingPathComponent:relativePath];
+						NSString *subTargetPath = [targetPath stringByAppendingPathComponent:relativePath];
+						retval = carbonMoveSingle(subSourcePath, subTargetPath);
+						if (retval != 0) break;
+					}
+				}
+			}
+
+		}
+		else {
+			retval = carbonMoveSingle(sourcePath, targetPath);
+		}
+	}
+	else {
+		retval = 1;
+	}
+	return retval;
+}

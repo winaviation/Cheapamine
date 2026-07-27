@@ -5,6 +5,7 @@
 #include <string.h>
 #include <sandbox.h>
 #include <libjailbreak/jbclient_mach.h>
+#include "machomerger_hook.h"
 
 #include "dyld.h"
 #include "dyld_jbinfo.h"
@@ -70,6 +71,9 @@ void dyldhook_perform_checkin(void)
 	}
 }
 
+int is_blastdoor = 0;
+extern const char *ORIG(_simple_getenv)(const char *argv[], const char *which);
+
 int simple_atoi(char *p)
 {
 	int negate = p[0] == '-';
@@ -110,7 +114,13 @@ void dyldhook_init(uintptr_t kernelParams)
 
 	// Walk kernelParams to get envp
 	uintptr_t argc = *(uintptr_t *)(kernelParams + sizeof(void *));
-	char **argv = (char **)(kernelParams + sizeof(void *) + sizeof(argc));
+	const char **argv = (const char **)(kernelParams + sizeof(void *) + sizeof(argc));
+	if(argv && argc > 0) {
+	  const char *exec = argv[0];
+	  if(exec && strlen(exec) && strcmp(exec, "/System/Library/PrivateFrameworks/MessagesBlastDoorSupport.framework/XPCServices/MessagesBlastDoorService.xpc/MessagesBlastDoorService") == 0) {
+	    is_blastdoor = 1;
+	  }
+	}
 	char **envp = (char **)(kernelParams + sizeof(void *) + sizeof(argc) + (sizeof(const char *) * argc) + sizeof(void *));
 
 	if (_simple_getenv(envp, "DYLD_HOOK_PRINT") != NULL) {
@@ -173,18 +183,6 @@ void dyldhook_init(uintptr_t kernelParams)
 		setuid(uid);
 		setreuid(ruid, -1);
 
-		// if (gDyldHookLog) {
-		// 	uid_t uid  = getuid();
-		// 	uid_t euid = geteuid();
-		// 	gid_t gid  = getgid();
-		// 	gid_t egid = getegid();
-
-		// 	_simple_dprintf(2, "PID  : %d\n", (int)getpid());
-		// 	_simple_dprintf(2, "PPID : %d\n", (int)getppid());
-		// 	_simple_dprintf(2, "uid  : real=%d  effective=%d\n", (int)uid,  (int)euid);
-		// 	_simple_dprintf(2, "gid  : real=%d  effective=%d\n", (int)gid,  (int)egid);
-		// }
-
 		char r = 0x42;
 		write(fd, &r, sizeof(r));
 
@@ -192,12 +190,13 @@ void dyldhook_init(uintptr_t kernelParams)
 	}
 
 	// If DYLD_INSERT_LIBRARIES is not set or does not contain systemhook, bail out
-	const char *insertLibrariesVar = _simple_getenv(envp, "DYLD_INSERT_LIBRARIES");
+	const char *insertLibrariesVar = ORIG(_simple_getenv)((const char **)envp, "DYLD_INSERT_LIBRARIES");
+//	const char *insertLibrariesVar = _simple_getenv(envp, "DYLD_INSERT_LIBRARIES");
 	if (!insertLibrariesVar) {
 		if (gDyldHookLog) {
 			_simple_dprintf(2, "Not checking in, DYLD_INSERT_LIBRARIES was not found\n");
 		}
-		return;		
+		return;
 	}
 	if (!strstr(insertLibrariesVar, "/systemhook.dylib")) {
 		if (gDyldHookLog) {

@@ -160,8 +160,17 @@ int systemwide_trust_file(audit_token_t *processToken, int rfd, struct siginfo *
 	if (fsr == 0) {
 		// Anything on the rootfs or fakelib mount point can be ignored as it's guaranteed to already be in trustcache
 		if (!strcmp(fsb.f_mntonname, "/") || !strcmp(fsb.f_mntonname, "/usr/lib")) {
-			close(fd);
-			return 0;
+                        int scache = 0;
+                        char filename[PATH_MAX];
+                        if (fcntl(fd, F_GETPATH, filename) != -1) {
+                          if(strstr(filename, "shared_cache")) {
+                            scache = 1;
+                          }
+                        }
+                        if(!scache) {
+                          close(fd);
+                          return 0;
+                        }
 		}
 	}
 
