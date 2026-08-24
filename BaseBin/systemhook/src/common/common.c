@@ -126,7 +126,6 @@ static kSpawnConfig spawn_config_for_executable(const char* path, char *const ar
 		"/System/Library/Frameworks/GSS.framework/Helpers/GSSCred",
 		"/System/Library/PrivateFrameworks/DataAccess.framework/Support/dataaccessd",
 		"/System/Library/PrivateFrameworks/IDSBlastDoorSupport.framework/XPCServices/IDSBlastDoorService.xpc/IDSBlastDoorService",
-		"/System/Library/PrivateFrameworks/MessagesBlastDoorSupport.framework/XPCServices/MessagesBlastDoorService.xpc/MessagesBlastDoorService",
 	};
 	size_t blacklistCount = sizeof(processBlacklist) / sizeof(processBlacklist[0]);
 	for (size_t i = 0; i < blacklistCount; i++)
@@ -233,24 +232,36 @@ static int spawn_exec_hook_common(bool isExec,
 		}
 	} while (0);
 
-	uint8_t *attrStruct = (uint8_t *)attr;
-	if (attrStruct) {
-		// If systemhook is being injected and jetsam limits are set, increase them by a factor of jetsamMultiplier
-		if (shouldInsertJBEnv) {
-			if (jetsamMultiplier == 0 || isnan(jetsamMultiplier)) jetsamMultiplier = 3; // default value (3x)
-			if (jetsamMultiplier > 1) {
-				int memlimit_active = *(int*)(attrStruct + POSIX_SPAWNATTR_OFF_MEMLIMIT_ACTIVE);
-				if (memlimit_active != -1) {
-					*(int*)(attrStruct + POSIX_SPAWNATTR_OFF_MEMLIMIT_ACTIVE) = memlimit_active * jetsamMultiplier;
-				}
-				int memlimit_inactive = *(int*)(attrStruct + POSIX_SPAWNATTR_OFF_MEMLIMIT_INACTIVE);
-				if (memlimit_inactive != -1) {
-					*(int*)(attrStruct + POSIX_SPAWNATTR_OFF_MEMLIMIT_INACTIVE) = memlimit_inactive * jetsamMultiplier;
-				}
-			}
-		}
+	bool is_blastdoor = (strcmp(path, "/System/Library/PrivateFrameworks/MessagesBlastDoorSupport.framework/XPCServices/MessagesBlastDoorService.xpc/MessagesBlastDoorService") == 0);
 
-		// On iOS 17.6 and up Apple neutered persona overwrites to block going from (non root) -> (root)
+    if (is_blastdoor || shouldInsertJBEnv) {
+        uint8_t *attrStruct = (uint8_t *)attr;
+        if (attrStruct) {
+        if (is_blastdoor) {
+            *(int *)(attrStruct + POSIX_SPAWNATTR_OFF_MEMLIMIT_ACTIVE) = -1;
+            *(int *)(attrStruct + POSIX_SPAWNATTR_OFF_MEMLIMIT_INACTIVE) = -1;
+        } else {
+            if (jetsamMultiplier == 0 || isnan(jetsamMultiplier))
+            jetsamMultiplier = 3; // default value (3x)
+            if (jetsamMultiplier > 1) {
+            int memlimit_active =
+                *(int *)(attrStruct + POSIX_SPAWNATTR_OFF_MEMLIMIT_ACTIVE);
+            if (memlimit_active != -1) {
+                *(int *)(attrStruct + POSIX_SPAWNATTR_OFF_MEMLIMIT_ACTIVE) =
+                    memlimit_active * jetsamMultiplier;
+            }
+            int memlimit_inactive = *(
+                int *)(attrStruct + POSIX_SPAWNATTR_OFF_MEMLIMIT_INACTIVE);
+            if (memlimit_inactive != -1) {
+                *(int *)(attrStruct + POSIX_SPAWNATTR_OFF_MEMLIMIT_INACTIVE) =
+                    memlimit_inactive * jetsamMultiplier;
+            }
+            }
+        }
+        }
+    }
+
+                // On iOS 17.6 and up Apple neutered persona overwrites to block going from (non root) -> (root)
 		// Since jailbreak infra relies on this, we need to reenable it via our patches
 		// To do this we will spawn the process as suspended, modify the ucred to the desired uid/gid and resume it
 		// POSIX_SPAWN_SETEXEC is not a concern since using it together with POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE is not supported anyways
@@ -362,7 +373,7 @@ static int spawn_exec_hook_common(bool isExec,
 	return r;
 }
 
-int posix_spawn_hook_shared(pid_t *restrict pid, 
+int posix_spawn_hook_shared(pid_t *restrict pid,
 					   const char *restrict path,
 			 struct _posix_spawn_args_desc *desc,
 						  	    char *const argv[restrict],
