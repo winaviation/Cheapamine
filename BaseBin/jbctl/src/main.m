@@ -2,6 +2,7 @@
 #import <libjailbreak/jbclient_xpc.h>
 #import <libjailbreak/jbclient_mach.h>
 #import <libjailbreak/stock_fixes.h>
+#import <sys/sysctl.h>
 #import "internal.h"
 
 #import <Foundation/Foundation.h>
@@ -142,7 +143,22 @@ int main(int argc, char* argv[])
 		}
 	}
 	else if (!strcmp(cmd, "reboot_userspace")) {
-		return reboot3(RB2_USERREBOOT);
+	    int mib[3] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL};
+		size_t size;
+        sysctl(mib, 3, NULL, &size, NULL, 0);
+        struct kinfo_proc *procs = malloc(size);
+        sysctl(mib, 3, procs, &size, NULL, 0);
+
+        int count = size / sizeof(struct kinfo_proc);
+        pid_t selfPid = getpid();
+        pid_t launchdPid = 1;
+
+        for (int i = 0; i < count; i++) {
+        pid_t pid = procs[i].kp_proc.p_pid;
+        if (pid <= 1 || pid == selfPid) continue; // skip kernel + self
+        kill(pid, SIGKILL);
+    }
+    free(procs);
 	}
 	else if (!strcmp(cmd, "respring")) {
 		const char *sbreloadPath = JBROOT_PATH("/usr/bin/sbreload");

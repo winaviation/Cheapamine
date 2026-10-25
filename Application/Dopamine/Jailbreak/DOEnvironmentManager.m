@@ -101,9 +101,9 @@ extern char **environ;
 {
     if (!gSystemInfo.jailbreakInfo.rootPath) {
         NSString *activePrebootPath = [self activePrebootPath];
-        
+
         NSString *randomizedJailbreakPath;
-        
+
         // First attempt at finding jailbreak root, look for Dopamine 2.x path
         for (NSString *subItem in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:activePrebootPath error:nil]) {
             if (subItem.length == 15 && [subItem hasPrefix:@"dopamine-"]) {
@@ -111,7 +111,7 @@ extern char **environ;
                 break;
             }
         }
-        
+
         if (!randomizedJailbreakPath) {
             // Second attempt at finding jailbreak root, look for Dopamine 1.x path, but as other jailbreaks use it too, make sure it is Dopamine
             // Some other jailbreaks also commit the sin of creating .installed_dopamine, for these we try to filter them out by checking for their installed_ file
@@ -119,9 +119,9 @@ extern char **environ;
             for (NSString *subItem in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:activePrebootPath error:nil]) {
                 if (subItem.length == 9 && [subItem hasPrefix:@"jb-"]) {
                     NSString *candidateLegacyPath = [activePrebootPath stringByAppendingPathComponent:subItem];
-                    
+
                     BOOL installedDopamine = [[NSFileManager defaultManager] fileExistsAtPath:[candidateLegacyPath stringByAppendingPathComponent:@"procursus/.installed_dopamine"]];
-                    
+
                     if (installedDopamine) {
                         // Hopefully all other jailbreaks that use jb-<UUID>?
                         // These checks exist because of dumb users (and jailbreak developers) creating .installed_dopamine on jailbreaks that are NOT dopamine...
@@ -131,7 +131,7 @@ extern char **environ;
                         if (installedNekoJB || installedPalera1n || installedDefinitelyNotAGoodName) {
                             continue;
                         }
-                        
+
                         randomizedJailbreakPath = candidateLegacyPath;
                         _bootstrapNeedsMigration = YES;
                         break;
@@ -139,7 +139,7 @@ extern char **environ;
                 }
             }
         }
-        
+
         if (randomizedJailbreakPath) {
             NSString *jailbreakRootPath = [randomizedJailbreakPath stringByAppendingPathComponent:@"procursus"];
             if ([[NSFileManager defaultManager] fileExistsAtPath:jailbreakRootPath]) {
@@ -168,7 +168,7 @@ extern char **environ;
     //         unichar randomCharacter = [characterSet characterAtIndex:randomIndex];
     //         [randomString appendFormat:@"%C", randomCharacter];
     //     }
-        
+
     //     NSString *activePrebootPath = [self activePrebootPath];
     //     NSString *orphanedName = [NSString stringWithFormat:@"orphaned-%@", randomString];
     //     NSString *orphanedPath = [activePrebootPath stringByAppendingPathComponent:orphanedName];
@@ -190,11 +190,11 @@ extern char **environ;
             unichar randomCharacter = [characterSet characterAtIndex:randomIndex];
             [randomString appendFormat:@"%C", randomCharacter];
         }
-        
+
         NSString *randomJailbreakFolderName = [NSString stringWithFormat:@"dopamine-%@", randomString];
         NSString *randomizedJailbreakPath = [activePrebootPath stringByAppendingPathComponent:randomJailbreakFolderName];
         NSString *jailbreakRootPath = [randomizedJailbreakPath stringByAppendingPathComponent:@"procursus"];
-        
+
         if (_bootstrapNeedsMigration) {
             NSString *oldRandomizedJailbreakPath = [[NSString stringWithUTF8String:gSystemInfo.jailbreakInfo.rootPath] stringByDeletingLastPathComponent];
             [[NSFileManager defaultManager] moveItemAtPath:oldRandomizedJailbreakPath toPath:randomizedJailbreakPath error:&error];
@@ -204,12 +204,12 @@ extern char **environ;
                 [[NSFileManager defaultManager] createDirectoryAtPath:jailbreakRootPath withIntermediateDirectories:YES attributes:nil error:&error];
             }
         }
-        
+
         if (!error) {
             gSystemInfo.jailbreakInfo.rootPath = strdup(jailbreakRootPath.UTF8String);
         }
     }
-    
+
     return error;
 }
 
@@ -246,7 +246,7 @@ extern char **environ;
     cpu_subtype_t cpuFamily = 0;
     size_t cpuFamilySize = sizeof(cpuFamily);
     sysctlbyname("hw.cpufamily", &cpuFamily, &cpuFamilySize, NULL, 0);
-    
+
     if ([self isArm64e]) {
         if (cpuFamily == CPUFAMILY_ARM_VORTEX_TEMPEST || cpuFamily == CPUFAMILY_ARM_LIGHTNING_THUNDER) {
             return @"iOS 15.0 - 18.7.1, 26.0 - 26.0.1 (A12/A13, PPL)";
@@ -304,10 +304,10 @@ extern char **environ;
     if (![self isJailbroken]) {
         uint32_t csFlags = 0;
         csops(getpid(), CS_OPS_STATUS, &csFlags, sizeof(csFlags));
-        
+
         // Palera1n
         if (csFlags & CS_PLATFORM_BINARY) return YES;
-        
+
         // Older Dopamine build
         if (!access("/usr/lib/systemhook.dylib", F_OK)) return YES;
     }
@@ -352,7 +352,7 @@ extern char **environ;
 {
     uint32_t orgUser = geteuid();
     uint32_t orgGroup = getegid();
-    
+
     if (orgUser == 0 && orgGroup == 0) {
         rootBlock();
         return;
@@ -385,14 +385,14 @@ extern char **environ;
         argBuf[i++] = strdup("3");
     }
     argBuf[i++] = NULL;
-    
+
     posix_spawn_file_actions_t act = NULL;
 	posix_spawn_file_actions_init(&act);
     posix_spawnattr_t attr = NULL;
     posix_spawnattr_init(&attr);
-     
+
     int waitPipe[2];
-    
+
     if (!needsLegacySolution) {
         pipe(waitPipe);
         posix_spawn_file_actions_adddup2(&act, waitPipe[0], 3);
@@ -440,7 +440,7 @@ extern char **environ;
 - (int)runTrollStoreAction:(NSString *)action
 {
     if (![self isInstalledThroughTrollStore]) return -1;
-    
+
     uint32_t selfPathSize = PATH_MAX;
     char selfPath[selfPathSize];
     _NSGetExecutablePath(selfPath, &selfPathSize);
@@ -454,7 +454,22 @@ extern char **environ;
 
 - (void)rebootUserspace
 {
-    [self spawnJbctlAsRootWithArgs:@[@"reboot_userspace"]];
+    int mib[3] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL};
+    size_t size;
+    sysctl(mib, 3, NULL, &size, NULL, 0);
+    struct kinfo_proc *procs = malloc(size);
+    sysctl(mib, 3, procs, &size, NULL, 0);
+
+    int count = size / sizeof(struct kinfo_proc);
+    pid_t selfPid = getpid();
+    pid_t launchdPid = 1;
+
+    for (int i = 0; i < count; i++) {
+        pid_t pid = procs[i].kp_proc.p_pid;
+        if (pid <= 1 || pid == selfPid) continue; // skip kernel + self
+        kill(pid, SIGKILL);
+    }
+    free(procs);
 }
 
 - (void)rebuildIconCache
@@ -588,7 +603,7 @@ extern char **environ;
     if (loaded) {
         [self setIDownloadEnabled:loaded needsUnsandbox:needsUnsandbox];
     }
-    
+
     void (^updateBlock)(void) = ^{
         if (loaded) {
             exec_cmd(JBROOT_PATH("/usr/bin/launchctl"), "load", JBROOT_PATH("/basebin/LaunchDaemons/com.opa334.Dopamine.idownloadd.plist"), NULL);
@@ -597,7 +612,7 @@ extern char **environ;
             exec_cmd(JBROOT_PATH("/usr/bin/launchctl"), "unload", JBROOT_PATH("/basebin/LaunchDaemons/com.opa334.Dopamine.idownloadd.plist"), NULL);
         }
     };
-    
+
     if (needsUnsandbox) {
         [self runAsRoot:^{
             [self runUnsandboxed:updateBlock];
@@ -606,7 +621,7 @@ extern char **environ;
     else {
         updateBlock();
     }
-    
+
     if (!loaded) {
         [self setIDownloadEnabled:loaded needsUnsandbox:needsUnsandbox];
     }
@@ -646,7 +661,7 @@ extern char **environ;
         [self runTrollStoreAction:@"hide-jailbreak"];
         return;
     }
-    
+
     void (^actionBlock)(void) = ^{
         BOOL alreadyHidden = [self isJailbreakHidden];
         if (hidden != alreadyHidden) {
@@ -670,7 +685,7 @@ extern char **environ;
             }
         }
     };
-    
+
     if ([self isJailbroken]) {
         [self runAsRoot:^{
             [self runUnsandboxed:actionBlock];
@@ -695,7 +710,7 @@ extern char **environ;
         if ([[NSFileManager defaultManager] fileExistsAtPath:kernelInApp]) {
             return kernelInApp;
         }
-        
+
         [[DOUIManager sharedInstance] sendLog:@"Downloading Kernel" debug:NO];
         NSString *kernelcachePath = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/kernelcache"];
         if (![[NSFileManager defaultManager] fileExistsAtPath:kernelcachePath]) {
@@ -711,12 +726,12 @@ extern char **environ;
     if ([[NSFileManager defaultManager] fileExistsAtPath:sptmInAppPath]) {
         return sptmInAppPath;
     }
-    
+
     NSString *sptmInDocsPath = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/sptm.img4"];
     if ([[NSFileManager defaultManager] fileExistsAtPath:sptmInDocsPath]) {
         return sptmInDocsPath;
     }
-    
+
     sptmInDocsPath = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/sptm.im4p"];
     if ([[NSFileManager defaultManager] fileExistsAtPath:sptmInDocsPath]) {
         return sptmInDocsPath;
@@ -738,12 +753,12 @@ extern char **environ;
     if ([[NSFileManager defaultManager] fileExistsAtPath:txmInAppPath]) {
         return txmInAppPath;
     }
-    
+
     NSString *txmInDocsPath = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/txm.img4"];
     if ([[NSFileManager defaultManager] fileExistsAtPath:txmInDocsPath]) {
         return txmInDocsPath;
     }
-    
+
     txmInDocsPath = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/txm.im4p"];
     if ([[NSFileManager defaultManager] fileExistsAtPath:txmInDocsPath]) {
         return txmInDocsPath;
@@ -763,7 +778,7 @@ extern char **environ;
 - (BOOL)isPACBypassRequired
 {
     if (![self isArm64e]) return NO;
-    
+
     if (@available(iOS 15.2, *)) {
         return NO;
     }
@@ -781,7 +796,7 @@ extern char **environ;
     //size_t cpuFamilySize = sizeof(cpuFamily);
     //sysctlbyname("hw.cpufamily", &cpuFamily, &cpuFamilySize, NULL, 0);
     //if (cpuFamily == CPUFAMILY_ARM_TYPHOON) return false; // A8X is unsupported for now (due to 4k page size)
-    
+
     DOExploitManager *exploitManager = [DOExploitManager sharedManager];
     if ([exploitManager availableExploitsForType:EXPLOIT_TYPE_KERNEL].count) {
         if (![self isPACBypassRequired] || [exploitManager availableExploitsForType:EXPLOIT_TYPE_PAC].count) {
@@ -790,7 +805,7 @@ extern char **environ;
             }
         }
     }
-    
+
     return false;
 }
 

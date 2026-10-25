@@ -311,6 +311,12 @@
 					<key>link</key>
 					<string>https://x.com/TrenchantARC</string>
 				</dict>
+				<dict>
+				    <key>name</key>
+					<string>winaviation</string>
+					<key>link</key>
+					<string>https://github.com/winaviation</string>
+				</dict>
 			</array>
 		</dict>
 		<dict>
